@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>A-Frame VR Tour Viewer (View Only)</title>
+    <!-- A-Frame library -->
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <!-- JSZip library for creating zip files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        /* Basic styles for the body and html */
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            overflow: hidden;
+            background-color: #000;
+            color: #fff;
+        }
+        /* Container for the A-Frame scene */
+        #aframe-container {
+            width: 100%;
+            height: 100vh;
+            position: relative;
+        }
+        /* A-Frame scene styling */
+        a-scene {
+            width: 100%;
+            height: 100%;
+            display: block; /* Ensure it takes full space */
+        }
+        /* Styling for the menu bar (simplified for view-only) */
+        #menu-bar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 280px;
+            background: rgba(255, 255, 255, 0.2); /* White with 80% transparency */
+            color: #000; /* Black font color for content inside */
+            padding: 15px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+            box-shadow: 0 4px 25px rgba(0,0,0,0.1);
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            border: 1px solid rgba(0,0,0,0.1);
+            transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+            transform: translateX(0);
+        }
+        /* Menu bar title */
+        #menu-bar h2 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 20px;
+            text-shadow: none; /* Removed shadow for better readability on light bg */
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+            padding-bottom: 10px;
+        }
+        /* List of scenes */
+        .scene-list {
+            margin-top: 15px;
+        }
+        /* Individual scene item */
+        .scene-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            margin-bottom: 8px;
+            background: rgba(0, 0, 0, 0.05); /* Darker transparent background for contrast */
+            border-radius: 8px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+        .scene-item:hover {
+            background: rgba(0, 0, 0, 0.1);
+            border-color: rgba(0,0,0,0.2);
+        }
+        .scene-item.active {
+            background: rgba(0, 0, 0, 0.2); /* Grey background for active tab */
+            border-color: rgba(0, 0, 0, 0.3);
+            font-weight: bold;
+            color: #000; /* Black text for active item */
+        }
+        /* Hidden file input */
+        #import-file-input {
+            display: none;
+        }
+        /* Import button styling */
+        #import-btn, #vr-cardboard-btn {
+            display: block;
+            padding: 12px;
+            background: #007bff; /* Blue button background */
+            color: white;
+            text-align: center;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 10px;
+            border: none;
+            transition: background 0.3s ease;
+            font-size: 15px;
+            font-weight: bold;
+        }
+        #import-btn:hover, #vr-cardboard-btn:hover {
+            background: #0056b3; /* Darker blue on hover */
+        }
+        /* Watermark styling */
+        #watermark {
+            position: absolute;
+            top: 10px; /* Positioned at the top */
+            right: 10px;
+            color: rgba(0, 0, 0, 0.2); /* Black with 20% opacity */
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 999; /* Below controls but above panorama */
+            pointer-events: none; /* Allows clicks to pass through to the panorama */
+        }
+
+        /* Responsive design for smaller screens */
+        @media (max-width: 768px) {
+            #menu-bar {
+                left: 0;
+                top: 0;
+                height: 100vh;
+                width: 70%;
+                max-width: 300px;
+                transform: translateX(-100%);
+                padding: 20px;
+            }
+            #menu-bar.menu-visible {
+                transform: translateX(0);
+            }
+            #toggle-menu {
+                display: block;
+                position: absolute;
+                top: 15px;
+                left: 15px;
+                z-index: 1001;
+                background: rgba(255, 255, 255, 0.2);
+                color: #000;
+                border: none;
+                padding: 10px 15px;
+                font-size: 24px;
+                border-radius: 8px;
+                backdrop-filter: blur(10px);
+                cursor: pointer;
+            }
+            #overlay {
+                display: none;
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 999;
+            }
+            #overlay.visible {
+                display: block;
+            }
+        }
+        /* Message box for alerts */
+        #message-box {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            text-align: center;
+            display: none; /* Hidden by default */
+        }
+        #message-box button {
+            margin-top: 15px;
+            background: #007bff;
+            padding: 8px 20px;
+            border-radius: 5px;
+            color: white; /* Ensure button text is white */
+            border: none; /* Remove button border */
+            cursor: pointer; /* Add pointer cursor */
+        }
+    </style>
+</head>
+<body>
+    <!-- Main container for the A-Frame scene -->
+    <div id="aframe-container">
+        <a-scene embedded vr-mode-ui="enabled: true">
+            <!-- Assets will be dynamically added here -->
+            <a-assets id="aframe-assets">
+                <!-- Default panorama for initial load -->
+                <img id="default-panorama" src="https://aframe.io/sample-assets/assets/images/equirectangular/galaxy.jpg">
+                <!-- SVG for the red downward arrow hotspot icon -->
+                <img id="hotspot-arrow-icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJyZWQiIGQ9Ik03IDBsNS41IDUgNS41LTUgLTVuNS01eiIvPjxwYXRoIGZpbGw9Im5vbmUiIGQ9Ik0wIDBoMjR2MjRIMHoiLz48L3N2Zz4=">
+            </a-assets>
+
+            <!-- Sky for 360 panorama -->
+            <a-sky id="current-sky" src="#default-panorama"></a-sky>
+
+            <!-- Camera with cursor for interaction -->
+            <a-entity camera look-controls="enabled: true">
+                <a-cursor fuse="false" raycaster="objects: .collidable" cursor="rayOrigin: mouse"></a-cursor>
+            </a-entity>
+        </a-scene>
+    </div>
+
+    <!-- Sidebar menu for scenes -->
+    <div id="menu-bar">
+        <h2>VR Tour Viewer</h2>
+        <label for="import-file-input" id="import-btn">Import Project (Zip)</label>
+        <input type="file" id="import-file-input" accept=".zip">
+
+        <div class="scene-list" id="scene-list">
+            <p style="color: rgba(0,0,0,0.7); font-size: 13px; text-align: center;">Import your VR tour project to start viewing.</p>
+        </div>
+        <!-- New VR Cardboard button for mobile devices -->
+        <button id="vr-cardboard-btn">Enter VR Mode</button>
+    </div>
+    
+    <!-- Control buttons -->
+    <button id="toggle-menu">☰</button>
+
+    <!-- Overlay for mobile menu -->
+    <div id="overlay"></div>
+
+    <!-- Watermark -->
+    <div id="watermark">KANDARP SHASTRI AND ASSOCIATE</div>
+
+    <!-- Custom Message Box -->
+    <div id="message-box" class="hidden">
+        <p id="message-text"></p>
+        <button id="message-ok-btn">OK</button>
+    </div>
+
+    <script>
+        // Custom A-Frame component for scene navigation hotspots
+        AFRAME.registerComponent('scene-hotspot', {
+            schema: {
+                targetScene: { type: 'string' },
+                text: { type: 'string', default: 'Go' },
+                hotspotId: { type: 'string' } // Unique ID for identification
+            },
+            init: function() {
+                const el = this.el;
+                const data = this.data;
+
+                // Create an image element for the downward arrow hotspot icon
+                const iconEl = document.createElement('a-image');
+                iconEl.setAttribute('src', '#hotspot-arrow-icon'); // Reference the SVG asset
+                iconEl.setAttribute('width', '0.5'); // Small size
+                iconEl.setAttribute('height', '0.5'); // Small size
+                iconEl.setAttribute('position', '0 0 0'); // Centered on the entity
+                iconEl.setAttribute('class', 'collidable'); // Make it clickable by raycaster
+                el.appendChild(iconEl);
+
+                // Add animation to the arrow icon
+                iconEl.setAttribute('animation', {
+                    property: 'position',
+                    to: '0 0.1 0', // Move slightly up
+                    dir: 'alternate',
+                    loop: true,
+                    dur: 1000, // 1 second
+                    easing: 'easeInOutQuad'
+                });
+
+                // Create text element
+                const textEl = document.createElement('a-entity');
+                textEl.setAttribute('text', {
+                    value: data.text,
+                    align: 'center',
+                    color: 'white',
+                    width: 2 // Adjust width for text readability
+                });
+                textEl.setAttribute('position', '0 -0.4 0'); // Position below the arrow icon
+                el.appendChild(textEl);
+
+                // Add click listener for navigation
+                el.addEventListener('click', () => {
+                    if (data.targetScene) {
+                        loadScene(data.targetScene);
+                    }
+                });
+            }
+        });
+
+        // Custom A-Frame component for video planes
+        AFRAME.registerComponent('video-plane', {
+            schema: {
+                src: { type: 'string' }, // ID of the video asset
+                width: { type: 'number', default: 2 },
+                height: { type: 'number', default: 1.125 },
+                hotspotId: { type: 'string' }, // Unique ID for identification
+                addBorder: { type: 'boolean', default: false } // New schema property for border
+            },
+            init: function() {
+                this.createVideoPlane();
+            },
+            update: function(oldData) {
+                // Check if properties relevant to the video plane or border changed
+                if (this.data.src !== oldData.src ||
+                    this.data.width !== oldData.width ||
+                    this.data.height !== oldData.height ||
+                    this.data.addBorder !== oldData.addBorder) {
+                    this.createVideoPlane(); // Recreate the plane if relevant data changes
+                }
+            },
+            createVideoPlane: function() {
+                const el = this.el;
+                const data = this.data;
+
+                // Clear previous children to prevent duplicates on update
+                while (el.firstChild) {
+                    el.removeChild(el.firstChild);
+                }
+
+                // Create a plane geometry for the video
+                const videoEl = document.createElement('a-entity');
+                videoEl.setAttribute('geometry', {
+                    primitive: 'plane',
+                    width: data.width,
+                    height: data.height
+                });
+
+                // Set material to the video asset
+                videoEl.setAttribute('material', {
+                    src: data.src,
+                    shader: 'flat', // Use flat shader for video to avoid lighting issues
+                    side: 'double', // Render on both sides
+                    transparent: true // Crucial for showing transparency
+                });
+
+                videoEl.setAttribute('class', 'collidable'); // Make it clickable
+
+                // Get the actual video element from the assets
+                const videoElement = document.querySelector(data.src);
+                if (videoElement) {
+                    // Add click listener to toggle play/pause
+                    videoEl.addEventListener('click', () => {
+                        if (videoElement.paused) {
+                            videoElement.play();
+                            showMessage('Video Playing');
+                        } else {
+                            videoElement.pause();
+                            showMessage('Video Paused');
+                        }
+                    });
+                } else {
+                    console.warn(`Video element with ID ${data.src} not found.`);
+                }
+
+                el.appendChild(videoEl);
+
+                // Add border if addBorder is true
+                if (data.addBorder) {
+                    const borderWidth = 0.05; // Thickness of the border in meters
+                    const borderColor = '#000000'; // Black color
+
+                    // Top border
+                    const borderTop = document.createElement('a-entity');
+                    borderTop.setAttribute('geometry', {
+                        primitive: 'box',
+                        width: data.width + borderWidth * 2, // Extend width to cover corners
+                        height: borderWidth,
+                        depth: 0.01 // Thin depth
+                    });
+                    borderTop.setAttribute('material', { color: borderColor });
+                    borderTop.setAttribute('position', `0 ${(data.height / 2) + (borderWidth / 2)} 0`);
+                    el.appendChild(borderTop);
+
+                    // Bottom border
+                    const borderBottom = document.createElement('a-entity');
+                    borderBottom.setAttribute('geometry', {
+                        primitive: 'box',
+                        width: data.width + borderWidth * 2,
+                        height: borderWidth,
+                        depth: 0.01
+                    });
+                    borderBottom.setAttribute('material', { color: borderColor });
+                    borderBottom.setAttribute('position', `0 -${(data.height / 2) + (borderWidth / 2)} 0`);
+                    el.appendChild(borderBottom);
+
+                    // Left border
+                    const borderLeft = document.createElement('a-entity');
+                    borderLeft.setAttribute('geometry', {
+                        primitive: 'box',
+                        width: borderWidth,
+                        height: data.height + borderWidth * 2, // Extend height
+                        depth: 0.01
+                    });
+                    borderLeft.setAttribute('material', { color: borderColor });
+                    borderLeft.setAttribute('position', `-${(data.width / 2) + (borderWidth / 2)} 0 0`);
+                    el.appendChild(borderLeft);
+
+                    // Right border
+                    const borderRight = document.createElement('a-entity');
+                    borderRight.setAttribute('geometry', {
+                        primitive: 'box',
+                        width: borderWidth,
+                        height: data.height + borderWidth * 2,
+                        depth: 0.01
+                    });
+                    borderRight.setAttribute('material', { color: borderColor });
+                    borderRight.setAttribute('position', `${(data.width / 2) + (borderWidth / 2)} 0 0`);
+                    el.appendChild(borderRight);
+                }
+            }
+        });
+
+
+        // Global variables
+        let aScene;
+        let currentSky;
+        let currentSceneId = null;
+        // Stores { id, name, panoramaBase64, panoramaMimeType, hotspots: [], videos: [] }
+        const scenesData = [];
+
+        // DOM element references
+        const menuBar = document.getElementById('menu-bar');
+        const sceneList = document.getElementById('scene-list');
+        const importFileInput = document.getElementById('import-file-input');
+        const aframeAssets = document.getElementById('aframe-assets');
+        const messageBox = document.getElementById('message-box');
+        const messageText = document.getElementById('message-text');
+        const messageOkBtn = document.getElementById('message-ok-btn');
+        const toggleMenuBtn = document.getElementById('toggle-menu');
+        const vrCardboardBtn = document.getElementById('vr-cardboard-btn');
+        const overlay = document.getElementById('overlay');
+
+
+        /**
+         * Shows a custom message box.
+         * @param {string} message - The message to display.
+         */
+        function showMessage(message) {
+            messageText.textContent = message;
+            messageBox.classList.remove('hidden');
+            messageBox.style.display = 'block';
+        }
+
+        /**
+         * Hides the custom message box.
+         */
+        function hideMessage() {
+            messageBox.style.display = 'none';
+        }
+
+        /**
+         * Initializes the A-Frame scene and sets up basic components.
+         */
+        function initViewer() {
+            aScene = document.querySelector('a-scene');
+            currentSky = document.getElementById('current-sky');
+
+            // Set initial sky to default panorama
+            currentSky.setAttribute('src', '#default-panorama');
+            currentSceneId = 'default-panorama'; // Use a special ID for the default
+        }
+
+        /**
+         * Adds a new panorama scene to the viewer.
+         * @param {string} name - The name of the scene.
+         * @param {string} panoramaBase64 - The base64 data of the panorama image.
+         * @param {string} panoramaMimeType - The MIME type of the panorama image.
+         * @param {string} [sceneId=null] - Optional ID for the scene (used during import).
+         * @param {Array} [hotspots=[]] - Optional array of hotspots for the scene (used during import).
+         * @param {Array} [videos=[]] - Optional array of video planes for the scene (used during import).
+         */
+        function addScene(name, panoramaBase64, panoramaMimeType, sceneId = null, hotspots = [], videos = []) {
+            const newSceneId = sceneId || `scene-${Date.now()}`;
+            const panoramaSrc = `data:${panoramaMimeType};base64,${panoramaBase64}`;
+
+            // Add panorama image to A-Frame assets
+            let imgAsset = document.getElementById(newSceneId + '-panorama');
+            if (!imgAsset) {
+                imgAsset = document.createElement('img');
+                imgAsset.setAttribute('id', newSceneId + '-panorama');
+                aframeAssets.appendChild(imgAsset);
+            }
+            imgAsset.setAttribute('src', panoramaSrc);
+
+            scenesData.push({
+                id: newSceneId,
+                name: name,
+                panoramaBase64: panoramaBase64,
+                panoramaMimeType: panoramaMimeType,
+                hotspots: hotspots, // Store hotspot data
+                videos: videos // Store video plane data
+            });
+
+            updateSceneList();
+        }
+
+        /**
+         * Loads a specific scene by its ID.
+         * @param {string} sceneId - The ID of the scene to load.
+         */
+        function loadScene(sceneId) {
+            if (currentSceneId === sceneId) return; // Prevent unnecessary reload
+
+            // Clear existing hotspots and video planes from the scene
+            const existingEntities = aScene.querySelectorAll('[scene-hotspot], [video-plane]');
+            existingEntities.forEach(el => {
+                el.parentNode.removeChild(el);
+            });
+
+            const targetSceneData = scenesData.find(s => s.id === sceneId);
+
+            if (targetSceneData) {
+                // Update sky
+                currentSky.setAttribute('src', `#${targetSceneData.id}-panorama`);
+                currentSceneId = sceneId;
+
+                // Add hotspots for the new scene
+                targetSceneData.hotspots.forEach(hotspot => {
+                    addHotspotToScene(hotspot.type, hotspot.position, hotspot.rotation, hotspot.targetScene, hotspot.text, null, null, null, hotspot.hotspotId);
+                });
+
+                // Add video planes for the new scene
+                targetSceneData.videos.forEach(video => {
+                    addVideoAssetToAFrame(video.id, video.base64, video.mimeType);
+                    // Pass addBorder property and scale
+                    addHotspotToScene('video-plane', video.position, video.rotation, null, null, video.id, video.width, video.height, video.hotspotId, video.addBorder, video.scale);
+                });
+
+                updateSceneList();
+            } else if (sceneId === 'default-panorama') {
+                currentSky.setAttribute('src', '#default-panorama');
+                currentSceneId = 'default-panorama';
+                updateSceneList();
+            } else {
+                console.error(`Scene with ID ${sceneId} not found.`);
+            }
+        }
+
+        /**
+         * Adds an A-Frame hotspot or video plane entity to the current scene.
+         * @param {string} type - 'scene-nav' or 'video-plane'.
+         * @param {object} position - {x, y, z} position.
+         * @param {object} rotation - {x, y, z} rotation.
+         * @param {string} [targetScene] - For scene-nav hotspots.
+         * @param {string} [text] - For scene-nav hotspots.
+         * @param {string} [videoAssetId] - For video-plane hotspots (ID of the video asset).
+         * @param {number} [videoWidth] - For video-plane hotspots.
+         * @param {number} [videoHeight] - For video-plane hotspots.
+         * @param {string} [hotspotId=null] - Optional ID for the hotspot (used during import/edit).
+         * @param {boolean} [addBorder=false] - Optional: whether to add a border to video plane.
+         * @param {object} [scale={x:1, y:1, z:1}] - Optional: scale for video plane.
+         */
+        function addHotspotToScene(type, position, rotation, targetScene, text, videoAssetId, videoWidth, videoHeight, hotspotId = null, addBorder = false, scale = {x:1, y:1, z:1}) {
+            const elId = hotspotId || `${type}-${Date.now()}`; // Generate ID if not provided
+            let hotspotEl = document.getElementById(elId); // Check if element already exists (e.g., during update)
+
+            if (!hotspotEl) {
+                hotspotEl = document.createElement('a-entity');
+                hotspotEl.setAttribute('id', elId); // Set ID for easy lookup
+                aScene.appendChild(hotspotEl);
+            }
+            
+            hotspotEl.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
+            hotspotEl.setAttribute('rotation', `${rotation.x} ${rotation.y} ${rotation.z}`); // Apply rotation
+            hotspotEl.setAttribute('scale', `${scale.x} ${scale.y} ${scale.z}`); // Apply scale
+
+            if (type === 'scene-nav') {
+                hotspotEl.setAttribute('scene-hotspot', {
+                    targetScene: targetScene,
+                    text: text,
+                    hotspotId: elId // Pass ID to component
+                });
+            } else if (type === 'video-plane') {
+                hotspotEl.setAttribute('video-plane', {
+                    src: `#${videoAssetId}`,
+                    width: videoWidth,
+                    height: videoHeight,
+                    hotspotId: elId, // Pass ID to component
+                    addBorder: addBorder // Pass the addBorder property
+                });
+            }
+            return elId; // Return the ID of the created entity
+        }
+
+        /**
+         * Adds a video asset to A-Frame's <a-assets> section.
+         * @param {string} id - The ID for the video asset.
+         * @param {string} base64 - The base64 data of the video.
+         * @param {string} mimeType - The MIME type of the video.
+         */
+        function addVideoAssetToAFrame(id, base64, mimeType) {
+            let videoAsset = document.getElementById(id);
+            if (!videoAsset) {
+                videoAsset = document.createElement('video');
+                videoAsset.setAttribute('id', id);
+                videoAsset.setAttribute('loop', 'true');
+                videoAsset.setAttribute('autoplay', 'true');
+                videoAsset.setAttribute('crossorigin', 'anonymous');
+                aframeAssets.appendChild(videoAsset);
+            }
+            videoAsset.setAttribute('src', `data:${mimeType};base64,${base64}`);
+        }
+
+        /**
+         * Updates the list of scenes in the menu.
+         */
+        function updateSceneList() {
+            sceneList.innerHTML = '';
+            if (scenesData.length === 0) {
+                sceneList.innerHTML = '<p style="color: rgba(0,0,0,0.7); font-size: 13px; text-align: center;">Import your VR tour project to start viewing.</p>';
+                return;
+            }
+            scenesData.forEach(scene => {
+                const item = document.createElement('div');
+                item.className = `scene-item ${scene.id === currentSceneId ? 'active' : ''}`;
+                
+                const sceneName = document.createElement('span');
+                sceneName.textContent = scene.name;
+                item.appendChild(sceneName);
+
+                item.onclick = () => {
+                    loadScene(scene.id);
+                    if (window.innerWidth <= 768) {
+                        menuBar.classList.remove('menu-visible');
+                        overlay.classList.remove('visible');
+                    }
+                };
+                
+                sceneList.appendChild(item);
+            });
+        }
+
+        /**
+         * Imports a project from a zip file.
+         * @param {Event} } e - The file input change event.
+         */
+        async function importProject(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            showMessage("Importing project...");
+            try {
+                const zip = await JSZip.loadAsync(file);
+                const configJsonFile = zip.file("config.json");
+
+                if (!configJsonFile) {
+                    showMessage("config.json not found in the zip file.");
+                    return;
+                }
+
+                const configText = await configJsonFile.async("text");
+                const importedConfig = JSON.parse(configText);
+
+                // Clear existing scenes and data
+                scenesData.length = 0; // Clear the array
+                // Clear A-Frame assets and entities (except default panorama and hotspot icon)
+                aframeAssets.innerHTML = `
+                    <img id="default-panorama" src="https://aframe.io/sample-assets/assets/images/equirectangular/galaxy.jpg">
+                    <img id="hotspot-arrow-icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSJyZWQiIGQ9Ik03IDBsNS41IDUgNS41LTUgLTVuNS01eiIvPjxwYXRoIGZpbGw9Im5vbmUiIGQ9Ik0wIDBoMjR2MjRIMHoiLz48L3N2Zz4=">
+                `;
+                const existingEntities = aScene.querySelectorAll('[scene-hotspot], [video-plane]');
+                existingEntities.forEach(el => el.parentNode.removeChild(el));
+
+                for (const sceneConfig of importedConfig.scenes) {
+                    const panoramaFilename = sceneConfig.panoramaFilename;
+                    let panoramaBase64 = '';
+                    let panoramaMimeType = '';
+
+                    if (panoramaFilename && zip.file(panoramaFilename)) {
+                        const imageFile = zip.file(panoramaFilename);
+                        panoramaMimeType = `image/${panoramaFilename.split('.').pop()}`;
+                        panoramaBase64 = await imageFile.async("base64");
+                    } else {
+                        console.warn(`Panorama image not found for scene: ${sceneConfig.id} (${panoramaFilename})`);
+                        continue; // Skip scene if panorama is missing
+                    }
+
+                    const loadedVideos = [];
+                    for (const videoConfig of sceneConfig.videos) {
+                        const videoFilename = videoConfig.filename;
+                        if (videoFilename && zip.file(videoFilename)) {
+                            const videoFile = zip.file(videoFilename);
+                            const videoMimeType = `video/${videoFilename.split('.').pop()}`;
+                            const videoBase64 = await videoFile.async("base64");
+                            loadedVideos.push({
+                                hotspotId: videoConfig.hotspotId, // Ensure hotspotId is carried over
+                                id: videoConfig.id,
+                                position: videoConfig.position,
+                                rotation: videoConfig.rotation,
+                                scale: videoConfig.scale || {x:1, y:1, z:1}, // Load scale, default to 1
+                                base64: videoBase64,
+                                mimeType: videoMimeType,
+                                width: videoConfig.width,
+                                height: videoConfig.height,
+                                addBorder: videoConfig.addBorder || false // Load border preference
+                            });
+                        } else {
+                            console.warn(`Video file not found for video: ${videoConfig.id} (${videoFilename})`);
+                        }
+                    }
+
+                    addScene(
+                        sceneConfig.name,
+                        panoramaBase64,
+                        panoramaMimeType,
+                        sceneConfig.id,
+                        sceneConfig.hotspots, // Hotspots already have hotspotId
+                        loadedVideos // Pass loaded video data
+                    );
+                }
+
+                // Load the first scene specified in the imported config
+                if (importedConfig.currentSceneId) {
+                    loadScene(importedConfig.currentSceneId);
+                } else if (scenesData.length > 0) {
+                    loadScene(scenesData[0].id);
+                } else {
+                    // If no scenes imported, ensure default panorama is shown
+                    loadScene('default-panorama');
+                }
+                
+                updateSceneList();
+                showMessage("Project imported successfully!");
+
+            } catch (error) {
+                console.error("Error importing project:", error);
+                showMessage("Failed to import project. Please ensure it's a valid VR tour zip file.");
+            } finally {
+                e.target.value = ''; // Reset input to allow re-uploading the same file
+            }
+        }
+
+
+        // Event Listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            initViewer();
+
+            importFileInput.addEventListener('change', importProject);
+
+            toggleMenuBtn.addEventListener('click', () => {
+                menuBar.classList.toggle('menu-visible');
+                overlay.classList.toggle('visible');
+            });
+
+            overlay.addEventListener('click', () => {
+                menuBar.classList.remove('menu-visible');
+                overlay.classList.remove('visible');
+            });
+
+            messageOkBtn.addEventListener('click', hideMessage);
+
+            // VR Cardboard button click handler
+            vrCardboardBtn.addEventListener('click', () => {
+                aScene.enterVR(); // A-Frame's built-in function to enter VR mode
+            });
+        });
+    </script>
+</body>
+</html>
